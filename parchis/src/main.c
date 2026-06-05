@@ -10,7 +10,6 @@
 
 #include "../include/parchis_shared.h"
 
-/* ── Prototipos internos ──────────────────────────────────── */
 static void   crear_memoria_compartida(int *shmid, Tablero **tablero);
 static void   crear_pipes(int pipes_escritura[][2], int pipes_lectura[][2]);
 static void   lanzar_jugadores(pid_t pids[], int pipes_escritura[][2],
@@ -141,6 +140,7 @@ static void scheduler_round_robin(pid_t pids[], int pipes_lectura[][2],
         }
 
         registrar_evento(&msg);
+        imprimir_tablero(tablero);
 
         if (msg.evento == EVT_FIN_JUEGO) {
             tablero->juego_terminado = 1;
@@ -155,15 +155,12 @@ static void scheduler_round_robin(pid_t pids[], int pipes_lectura[][2],
 static void dar_turno(int jugador, Tablero *tablero) {
     (void)tablero;
     char señal = 1;
-    
+
     sem_post(&tablero->sem_turno);
-  
-    if (write(/* fd escritura del jugador — ya cerrado en padre */
-              /* Se usa el semáforo como mecanismo principal;
-                 el pipe lleva el resultado de vuelta */
-              STDOUT_FILENO - STDOUT_FILENO,   /* no-op placeholder */
+
+    if (write(
+              STDOUT_FILENO - STDOUT_FILENO,
               &señal, 0) < 0) {
-        /* silencioso — el semáforo es el canal real */
     }
     printf("[SCHEDULER] >> Turno: Jugador %d\n", jugador + 1);
 }
@@ -202,8 +199,12 @@ static void liberar_recursos(int shmid, Tablero *tablero,
         int status;
         if (waitpid(pids[i], &status, 0) < 0)
             perror("[SCHEDULER] waitpid");
+        else if (WIFEXITED(status))
+            printf("[SCHEDULER] Jugador %d (PID=%d) terminó (código %d).\n",
+                   i + 1, pids[i], WEXITSTATUS(status));
         else
-            printf("[SCHEDULER] Jugador %d (PID=%d) terminó.\n", i + 1, pids[i]);
+            printf("[SCHEDULER] Jugador %d (PID=%d) terminó anormalmente.\n",
+                   i + 1, pids[i]);
     }
 
     for (int i = 0; i < NUM_JUGADORES; i++) {

@@ -42,4 +42,7 @@ typedef struct {
 #define EVT_META        3
 #define EVT_FIN_JUEGO   4
 
-#endif 
+/* Visualizacion */
+void imprimir_tablero(const Tablero *tablero);
+
+#endif
