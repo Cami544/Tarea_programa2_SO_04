@@ -15,7 +15,7 @@ typedef struct {
     Tablero         *tablero;
     int              fd_resultado;
     int              ya_movio;
-    pthread_mutex_t  mtx;
+    pthread_mutex_t *mtx;        
 } ContextoTurno;
 
 typedef struct {
@@ -42,10 +42,10 @@ static void *hilo_ficha(void *arg) {
     int dado           = ctx->dado;
     Tablero *t         = ctx->tablero;
 
-    pthread_mutex_lock(&ctx->mtx);
+    pthread_mutex_lock(ctx->mtx);
 
     if (ctx->ya_movio) {
-        pthread_mutex_unlock(&ctx->mtx);
+        pthread_mutex_unlock(ctx->mtx);
         return NULL;
     }
 
@@ -53,7 +53,7 @@ static void *hilo_ficha(void *arg) {
 
     if (ficha->estado == FICHA_EN_BASE) {
         if (dado != 5) {
-            pthread_mutex_unlock(&ctx->mtx);
+            pthread_mutex_unlock(ctx->mtx);
             return NULL;
         }
         pthread_mutex_lock(&t->mutex);
@@ -75,7 +75,7 @@ static void *hilo_ficha(void *arg) {
         MensajePipe msg = { jug, fid, dado, salida, EVT_SALIO_BASE };
         write(ctx->fd_resultado, &msg, sizeof(MensajePipe));
         ctx->ya_movio = 1;
-        pthread_mutex_unlock(&ctx->mtx);
+        pthread_mutex_unlock(ctx->mtx);
         return NULL;
     }
 
@@ -115,11 +115,11 @@ static void *hilo_ficha(void *arg) {
         write(ctx->fd_resultado, &msg, sizeof(MensajePipe));
         pthread_mutex_unlock(&t->mutex);
         ctx->ya_movio = 1;
-        pthread_mutex_unlock(&ctx->mtx);
+        pthread_mutex_unlock(ctx->mtx);
         return NULL;
     }
 
-    pthread_mutex_unlock(&ctx->mtx);
+    pthread_mutex_unlock(ctx->mtx);
     return NULL;
 }
 
@@ -129,14 +129,17 @@ void proceso_jugador(int id, int fd_turno, int fd_resultado, Tablero *tablero) {
 
     srand((unsigned)(time(NULL) ^ ((unsigned)getpid() * 2654435761u)));
 
-    pthread_mutex_t mutex_local = PTHREAD_MUTEX_INITIALIZER;
-
     while (1) {
-        sem_wait(&tablero->sem_turno);
+        sem_wait(&tablero->sem_turno[id]);
 
         if (tablero->juego_terminado) break;
 
         int dado = lanzar_dado();
+        printf("[JUGADOR %d] lanzó dado: %d\n", id + 1, dado);
+
+        // Crear mutex en heap para evitar copia
+        pthread_mutex_t *mtx = malloc(sizeof(pthread_mutex_t));
+        pthread_mutex_init(mtx, NULL);
 
         ContextoTurno ctx_turno = {
             .id_jugador   = id,
@@ -144,15 +147,28 @@ void proceso_jugador(int id, int fd_turno, int fd_resultado, Tablero *tablero) {
             .tablero      = tablero,
             .fd_resultado = fd_resultado,
             .ya_movio     = 0,
-            .mtx          = mutex_local
+            .mtx          = mtx
         };
 
         pthread_t     hilos[FICHAS_POR_JUG];
         ContextoFicha ctx_ficha[FICHAS_POR_JUG];
 
+        // Ordenar fichas: primero las que están en JUEGO, luego las de BASE
+        int orden[FICHAS_POR_JUG];
+        int idx = 0;
+
+        for (int f = 0; f < FICHAS_POR_JUG; f++)
+            if (tablero->fichas[id][f].estado == FICHA_EN_JUEGO)
+                orden[idx++] = f;
+
+        for (int f = 0; f < FICHAS_POR_JUG; f++)
+            if (tablero->fichas[id][f].estado == FICHA_EN_BASE)
+                orden[idx++] = f;
+
+        // Crear hilos en el orden definido
         for (int f = 0; f < FICHAS_POR_JUG; f++) {
             ctx_ficha[f].turno    = &ctx_turno;
-            ctx_ficha[f].id_ficha = f;
+            ctx_ficha[f].id_ficha = orden[f];
             if (pthread_create(&hilos[f], NULL, hilo_ficha, &ctx_ficha[f]) != 0)
                 perror("[JUGADOR] pthread_create");
         }
@@ -162,14 +178,17 @@ void proceso_jugador(int id, int fd_turno, int fd_resultado, Tablero *tablero) {
                 perror("[JUGADOR] pthread_join");
         }
 
+        // Si ninguna ficha pudo moverse, igual reportar al scheduler
         if (!ctx_turno.ya_movio) {
             MensajePipe msg = { id, 0, dado, 0, EVT_MOVIMIENTO };
             write(fd_resultado, &msg, sizeof(MensajePipe));
         }
 
+        pthread_mutex_destroy(mtx);
+        free(mtx);
+
         if (tablero->juego_terminado) break;
     }
 
-    pthread_mutex_destroy(&mutex_local);
     printf("[JUGADOR %d] PID=%d terminando.\n", id + 1, getpid());
 }

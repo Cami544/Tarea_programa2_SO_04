@@ -25,7 +25,7 @@ typedef struct {
     int   juego_terminado;
     int   ganador;
     pthread_mutex_t mutex;
-    sem_t           sem_turno;
+    sem_t           sem_turno[NUM_JUGADORES];  
 } Tablero;
 
 typedef struct {

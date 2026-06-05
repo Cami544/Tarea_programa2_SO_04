@@ -153,16 +153,8 @@ static void scheduler_round_robin(pid_t pids[], int pipes_lectura[][2],
 }
 
 static void dar_turno(int jugador, Tablero *tablero) {
-    (void)tablero;
-    char señal = 1;
-
-    sem_post(&tablero->sem_turno);
-
-    if (write(
-              STDOUT_FILENO - STDOUT_FILENO,
-              &señal, 0) < 0) {
-    }
     printf("[SCHEDULER] >> Turno: Jugador %d\n", jugador + 1);
+    sem_post(&tablero->sem_turno[jugador]);
 }
 
 static int leer_mensaje(int fd_lectura, MensajePipe *msg) {
@@ -213,7 +205,8 @@ static void liberar_recursos(int shmid, Tablero *tablero,
     }
 
     pthread_mutex_destroy(&tablero->mutex);
-    sem_destroy(&tablero->sem_turno);
+    for (int i = 0; i < NUM_JUGADORES; i++)
+        sem_destroy(&tablero->sem_turno[i]);
 
     if (shmdt(tablero) < 0)
         perror("[SCHEDULER] shmdt");
